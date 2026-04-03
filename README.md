@@ -1,6 +1,6 @@
-# Steam Artwork Uploader
+# Steam Artwork Schizopost
 
-A CLI tool that uploads images to Steam Community Artwork, bypassing the manual web interface. It authenticates using your browser session cookies, scrapes Steam's upload form for dynamic tokens, and submits artwork via multipart POST with TLS fingerprint impersonation.
+A joke CLI tool for flooding your Steam Community Artwork page with nonsensical repeat uploads. Feed it an image (or a whole folder of them) and it'll spam-upload them to your profile so it looks like unhinged schizoposting artwork.
 
 ## Features
 
@@ -8,14 +8,14 @@ A CLI tool that uploads images to Steam Community Artwork, bypassing the manual 
 - Repeat uploads with a configurable quantity and delay
 - Reads PNG/JPEG dimensions directly from file headers (no Pillow needed)
 - Chrome TLS fingerprint impersonation via `curl_cffi` to avoid bot detection
-- Interactive first-run cookie setup with persistent storage (`~/.config/steam_artwork_uploader/cookies.json`)
+- Interactive first-run cookie setup with persistent storage (`~/.config/steam_artwork_schizopost/cookies.json`)
 - Validates file size against Steam's 5 MB limit before uploading
 
 ## Installation
 
 ```bash
-git clone https://github.com/lukecloud-cyber/steam_artwork_uploader.git
-cd steam_artwork_uploader
+git clone https://github.com/lukecloud-cyber/steam_artwork_schizopost.git
+cd steam_artwork_schizopost
 pip install .
 ```
 
@@ -23,20 +23,20 @@ pip install .
 
 ```bash
 # Upload a single image
-python steam_artwork_uploader.py photo.png
+python steam_artwork_schizopost.py photo.png
 
 # Upload a single image 3 times
-python steam_artwork_uploader.py photo.png 3
+python steam_artwork_schizopost.py photo.png 3
 
 # Upload every image in a folder
-python steam_artwork_uploader.py ./artwork/
+python steam_artwork_schizopost.py ./artwork/
 
 # Upload every image in a folder 2 times each
-python steam_artwork_uploader.py ./artwork/ 2
+python steam_artwork_schizopost.py ./artwork/ 2
 ```
 
 ```
-usage: steam_artwork_uploader.py [-h] [--delay DELAY] [--reset-cookies] path [quantity]
+usage: steam_artwork_schizopost.py [-h] [--delay DELAY] [--reset-cookies] path [quantity]
 
 positional arguments:
   path               Image file or folder of images to upload
@@ -53,7 +53,7 @@ On first run, the tool will prompt you to enter two cookies from your browser:
 2. Open DevTools (F12) > Application > Cookies > `https://steamcommunity.com`
 3. Copy the values for **sessionid** and **steamLoginSecure**
 
-Cookies are saved to `~/.config/steam_artwork_uploader/cookies.json` and reused on subsequent runs. Use `--reset-cookies` if they expire.
+Cookies are saved to `~/.config/steam_artwork_schizopost/cookies.json` and reused on subsequent runs. Use `--reset-cookies` if they expire.
 
 ## How It Works
 
@@ -61,7 +61,7 @@ Cookies are saved to `~/.config/steam_artwork_uploader/cookies.json` and reused 
 2. **POST** the image as multipart form data with all required tokens
 3. Check the redirect header for `fileuploadsuccess=1` to confirm success
 
-Each upload uses a random hex string as the artwork title.
+Each upload uses a random hex string as the artwork title for maximum incoherence.
 
 ## Requirements
 

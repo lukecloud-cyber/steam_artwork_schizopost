@@ -1,5 +1,5 @@
 [project]
-name = "steam-artwork-uploader"
+name = "steam-artwork-schizopost"
 version = "0.1.0"
 description = "CLI tool for uploading images to Steam Community Artwork"
 requires-python = ">=3.10"
@@ -10,4 +10,4 @@ dependencies = [
 ]
 
 [project.scripts]
-steam_artwork_uploader = "steam_artwork_uploader:main"
+steam_artwork_schizopost = "steam_artwork_schizopost:main"
