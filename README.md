@@ -13,6 +13,18 @@ A joke CLI tool for flooding your Steam Community Artwork page with nonsensical 
 
 ## Installation
 
+### Prerequisites
+
+Install [Git](https://git-scm.com/) if you don't have it:
+
+- **Windows:** `winget install Git.Git` (restart PowerShell after)
+- **macOS:** `brew install git`
+- **Linux:** `sudo apt install git` or `sudo dnf install git`
+
+You'll also need [Python 3.10+](https://www.python.org/downloads/).
+
+### Clone and install
+
 ```bash
 git clone https://github.com/lukecloud-cyber/steam_artwork_schizopost.git
 cd steam_artwork_schizopost
