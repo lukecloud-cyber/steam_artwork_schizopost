@@ -1,0 +1,6 @@
+# Debug artifacts
+steam_form.html
+steam_debug_*.html
+steam_request_debug.txt
+__pycache__/
+*.pyc
