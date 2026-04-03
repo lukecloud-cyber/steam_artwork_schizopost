@@ -3,15 +3,16 @@ import re
 import json
 import time
 import struct
-import logging
 import argparse
 import secrets
 from pathlib import Path
 from curl_cffi import requests, CurlMime
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.status import Status
 
-# --- LOGGING ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+console = Console()
 
 CONFIG_DIR = Path("~/.config/steamart").expanduser()
 COOKIES_FILE = CONFIG_DIR / "cookies.json"
@@ -24,49 +25,34 @@ def load_or_prompt_cookies() -> tuple[str, str]:
         sid = data.get("sessionid", "")
         lsc = data.get("steamLoginSecure", "")
         if sid and lsc:
+            console.print("[dim]Loaded cookies from[/] [cyan]~/.config/steamart/cookies.json[/]")
             return sid, lsc
 
-    print("""
-+----------------------------------------------------+
-|                                                    |
-|   Steam Cookie Setup                              |
-|                                                    |
-+----------------------------------------------------+
-|                                                    |
-|   To upload artwork, this script needs two         |
-|   cookies from your browser.                       |
-|                                                    |
-|   How to find them:                                |
-|                                                    |
-|   1. Open your browser and log into                |
-|      steamcommunity.com                            |
-|                                                    |
-|   2. Press F12 to open Developer Tools             |
-|                                                    |
-|   3. Click the "Application" tab at the top        |
-|      (you may need to click >> to find it)         |
-|                                                    |
-|   4. In the left sidebar, expand "Cookies"         |
-|      and click "https://steamcommunity.com"        |
-|                                                    |
-|   5. Find and copy the values for:                 |
-|      - sessionid                                   |
-|      - steamLoginSecure                            |
-|                                                    |
-|   Tip: Double-click a value to select it,          |
-|   then right-click > Copy.                         |
-|                                                    |
-+----------------------------------------------------+
-|   Cookies will be saved to:                        |
-|   ~/.config/steamart/cookies.json                  |
-+----------------------------------------------------+
-""")
+    console.print()
+    console.print(Panel.fit(
+        "[bold]This script needs two cookies from your browser.[/]\n"
+        "\n"
+        "[dim]How to find them:[/]\n"
+        "\n"
+        "  1. Log into [cyan]steamcommunity.com[/]\n"
+        "  2. Press [bold]F12[/] to open Developer Tools\n"
+        "  3. Go to [bold]Application[/] tab [dim](click >> if hidden)[/]\n"
+        "  4. Expand [bold]Cookies[/] > [cyan]https://steamcommunity.com[/]\n"
+        "  5. Copy the values for:\n"
+        "     [green]sessionid[/]  and  [green]steamLoginSecure[/]\n"
+        "\n"
+        f"[dim]Cookies will be saved to {COOKIES_FILE}[/]",
+        title="[bold yellow]Steam Cookie Setup[/]",
+        border_style="yellow",
+        padding=(1, 3),
+    ))
+    console.print()
 
-    session_id = input("sessionid: ").strip()
-    login_secure = input("steamLoginSecure: ").strip()
+    session_id = Prompt.ask("[green]sessionid[/]").strip()
+    login_secure = Prompt.ask("[green]steamLoginSecure[/]").strip()
 
     if not session_id or not login_secure:
-        logger.error("Both cookies are required")
+        console.print("[bold red]Both cookies are required.[/]")
         raise SystemExit(1)
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -74,7 +60,7 @@ def load_or_prompt_cookies() -> tuple[str, str]:
         "sessionid": session_id,
         "steamLoginSecure": login_secure,
     }, indent=2) + "\n")
-    logger.info(f"Cookies saved to {COOKIES_FILE}")
+    console.print(f"[green]Cookies saved to[/] [cyan]{COOKIES_FILE}[/]")
 
     return session_id, login_secure
 
@@ -83,7 +69,7 @@ def clear_cookies():
     """Remove saved cookies so the user is prompted again."""
     if COOKIES_FILE.exists():
         COOKIES_FILE.unlink()
-        logger.info("Saved cookies cleared")
+        console.print("[yellow]Saved cookies cleared.[/]")
 
 
 def extract_field(html: str, name: str) -> str:
@@ -131,17 +117,14 @@ def upload_image(image_path: str, title: str, session_id: str, login_secure: str
         # Step 1: GET the form to pull dynamic tokens and real upload URL
         form_resp = requests.get(edit_url, cookies=cookies, impersonate="chrome")
         form_html = form_resp.text
-        logger.info(f"Form GET: {form_resp.status_code} | {form_resp.url}")
 
         action_match = re.search(r'<form[^>]+action="([^"]+)"', form_html)
         upload_url = action_match.group(1) if action_match else edit_url
-        logger.info(f"Upload URL: {upload_url}")
 
         width, height = image_dimensions(image_path)
         file_size = os.path.getsize(image_path)
-        logger.info(f"Image: {width}x{height}, {file_size / 1024 / 1024:.2f} MB")
         if file_size > 5 * 1024 * 1024:
-            logger.error("File exceeds Steam's 5 MB limit — aborting")
+            console.print(f"  [red]File exceeds Steam's 5 MB limit[/] ({file_size / 1024 / 1024:.1f} MB)")
             return False
 
         # Extract values from form — send as-is (URL-encoded), do NOT unquote
@@ -150,8 +133,8 @@ def upload_image(image_path: str, title: str, session_id: str, login_secure: str
         token = extract_field(form_html, "token")
 
         if not wg or not token:
-            logger.error("Failed to extract form tokens — cookies may have expired")
-            logger.info("Run with --reset-cookies to enter new ones")
+            console.print("  [red]Failed to extract form tokens — cookies may have expired[/]")
+            console.print("  [dim]Run with --reset-cookies to enter new ones[/]")
             return False
 
         # Extract cloudfilenameprefix from JS if present
@@ -184,8 +167,6 @@ def upload_image(image_path: str, title: str, session_id: str, login_secure: str
         mp.addpart(name="visibility", data=b"0")
         mp.addpart(name="agree_terms", data=b"on")
 
-        logger.info(f"Uploading: {image_path!r} as {title!r}")
-
         resp = requests.post(
             upload_url,
             multipart=mp,
@@ -198,25 +179,23 @@ def upload_image(image_path: str, title: str, session_id: str, login_secure: str
         )
 
         redirect_url = resp.headers.get("location", "")
-        logger.info(f"Redirect URL: {redirect_url}")
 
         if "fileuploadsuccess=1" in redirect_url:
-            logger.info("SUCCESS")
             return True
 
         result_match = re.search(r"fileuploadsuccess=(\d+)", redirect_url)
         if result_match:
-            logger.error(f"Steam returned EResult={result_match.group(1)} (not OK)")
+            console.print(f"  [red]Steam returned EResult={result_match.group(1)}[/]")
         else:
-            logger.error("Upload failed — unexpected response")
+            console.print("  [red]Upload failed — unexpected response[/]")
 
         return False
 
     except FileNotFoundError:
-        logger.error(f"File not found: {image_path}")
+        console.print(f"  [red]File not found:[/] {image_path}")
         return False
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        console.print(f"  [red]Error:[/] {e}")
         return False
 
 
@@ -252,28 +231,46 @@ def main():
 
     images = collect_images(args.path)
     if not images:
-        logger.error(f"No images found: {args.path}")
+        console.print(f"[bold red]No images found:[/] {args.path}")
         return
 
-    logger.info(f"Found {len(images)} image(s), uploading each {args.quantity} time(s)")
+    total = len(images) * args.quantity
+    console.print(
+        f"\n[bold]Found [cyan]{len(images)}[/cyan] image(s), "
+        f"uploading each [cyan]{args.quantity}[/cyan] time(s) "
+        f"[dim]({total} total)[/dim][/bold]\n"
+    )
 
     session_id, login_secure = load_or_prompt_cookies()
+    console.print()
 
-    total = len(images) * args.quantity
     success = 0
     upload_num = 0
     for image_path in images:
         for r in range(args.quantity):
             upload_num += 1
             random_title = secrets.token_hex(8)
-            logger.info(f"[{upload_num}/{total}] {os.path.basename(image_path)} (round {r + 1}/{args.quantity})")
-            if upload_image(image_path, random_title, session_id, login_secure):
-                success += 1
-            if upload_num < total:
-                logger.info(f"Waiting {args.delay}s before next upload...")
-                time.sleep(args.delay)
+            filename = os.path.basename(image_path)
+            label = f"[{upload_num}/{total}] {filename}"
+            if args.quantity > 1:
+                label += f" (round {r + 1}/{args.quantity})"
 
-    logger.info(f"Done: {success}/{total} uploaded successfully.")
+            with Status(f"[bold cyan]Uploading {filename}...[/]", console=console, spinner="dots"):
+                result = upload_image(image_path, random_title, session_id, login_secure)
+
+            if result:
+                console.print(f"  [green]OK[/green]  {label}")
+                success += 1
+            else:
+                console.print(f"  [red]FAIL[/red]  {label}")
+
+            if upload_num < total:
+                with Status(f"[dim]Waiting {args.delay}s...[/]", console=console, spinner="dots"):
+                    time.sleep(args.delay)
+
+    # Summary
+    color = "green" if success == total else ("yellow" if success > 0 else "red")
+    console.print(f"\n[bold {color}]Done: {success}/{total} uploaded successfully.[/]\n")
 
 
 if __name__ == "__main__":
