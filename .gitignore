@@ -1,6 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# AI assistant config
+CLAUDE.md
+GEMINI.md
+
 # Debug artifacts
 steam_form.html
 steam_debug_*.html
 steam_request_debug.txt
-__pycache__/
-*.pyc

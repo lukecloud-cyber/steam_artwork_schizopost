@@ -1,0 +1,12 @@
+[project]
+name = "steam-artwork-uploader"
+version = "0.1.0"
+description = "CLI tool for uploading images to Steam Community Artwork"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "curl_cffi",
+]
+
+[project.scripts]
+steamart = "steam_upload:main"
