@@ -8,7 +8,7 @@ A CLI tool that uploads images to Steam Community Artwork, bypassing the manual 
 - Repeat uploads with a configurable quantity and delay
 - Reads PNG/JPEG dimensions directly from file headers (no Pillow needed)
 - Chrome TLS fingerprint impersonation via `curl_cffi` to avoid bot detection
-- Interactive first-run cookie setup with persistent storage (`~/.config/steamart/cookies.json`)
+- Interactive first-run cookie setup with persistent storage (`~/.config/steam_artwork_uploader/cookies.json`)
 - Validates file size against Steam's 5 MB limit before uploading
 
 ## Installation
@@ -23,20 +23,20 @@ pip install .
 
 ```bash
 # Upload a single image
-steamart photo.png
+python steam_artwork_uploader.py photo.png
 
 # Upload a single image 3 times
-steamart photo.png 3
+python steam_artwork_uploader.py photo.png 3
 
 # Upload every image in a folder
-steamart ./artwork/
+python steam_artwork_uploader.py ./artwork/
 
 # Upload every image in a folder 2 times each
-steamart ./artwork/ 2
+python steam_artwork_uploader.py ./artwork/ 2
 ```
 
 ```
-usage: steam_upload.py [-h] [--delay DELAY] [--reset-cookies] path [quantity]
+usage: steam_artwork_uploader.py [-h] [--delay DELAY] [--reset-cookies] path [quantity]
 
 positional arguments:
   path               Image file or folder of images to upload
@@ -50,10 +50,10 @@ options:
 On first run, the tool will prompt you to enter two cookies from your browser:
 
 1. Log into [steamcommunity.com](https://steamcommunity.com)
-2. Open DevTools (F12) → Application → Cookies → `https://steamcommunity.com`
+2. Open DevTools (F12) > Application > Cookies > `https://steamcommunity.com`
 3. Copy the values for **sessionid** and **steamLoginSecure**
 
-Cookies are saved to `~/.config/steamart/cookies.json` and reused on subsequent runs. Use `--reset-cookies` if they expire.
+Cookies are saved to `~/.config/steam_artwork_uploader/cookies.json` and reused on subsequent runs. Use `--reset-cookies` if they expire.
 
 ## How It Works
 
@@ -66,7 +66,7 @@ Each upload uses a random hex string as the artwork title.
 ## Requirements
 
 - Python 3.10+
-- `curl_cffi` (installed automatically via `pip install .`)
+- `curl_cffi` and `rich` (installed automatically via `pip install .`)
 
 ## License
 

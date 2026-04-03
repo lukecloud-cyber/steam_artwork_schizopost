@@ -10,4 +10,4 @@ dependencies = [
 ]
 
 [project.scripts]
-steamart = "steam_upload:main"
+steam_artwork_uploader = "steam_artwork_uploader:main"

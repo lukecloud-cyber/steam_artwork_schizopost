@@ -14,7 +14,7 @@ from rich.status import Status
 
 console = Console()
 
-CONFIG_DIR = Path("~/.config/steamart").expanduser()
+CONFIG_DIR = Path("~/.config/steam_artwork_uploader").expanduser()
 COOKIES_FILE = CONFIG_DIR / "cookies.json"
 
 
@@ -25,7 +25,7 @@ def load_or_prompt_cookies() -> tuple[str, str]:
         sid = data.get("sessionid", "")
         lsc = data.get("steamLoginSecure", "")
         if sid and lsc:
-            console.print("[dim]Loaded cookies from[/] [cyan]~/.config/steamart/cookies.json[/]")
+            console.print("[dim]Loaded cookies from[/] [cyan]~/.config/steam_artwork_uploader/cookies.json[/]")
             return sid, lsc
 
     console.print()
