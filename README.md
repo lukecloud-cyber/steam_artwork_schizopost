@@ -4,7 +4,8 @@ A CLI tool that uploads images to Steam Community Artwork, bypassing the manual 
 
 ## Features
 
-- Uploads a single image multiple times with configurable delay
+- Upload a single image or an entire folder of images
+- Repeat uploads with a configurable quantity and delay
 - Reads PNG/JPEG dimensions directly from file headers (no Pillow needed)
 - Chrome TLS fingerprint impersonation via `curl_cffi` to avoid bot detection
 - Interactive first-run cookie setup with persistent storage (`~/.config/steamart/cookies.json`)
@@ -21,19 +22,25 @@ pip install .
 ## Usage
 
 ```bash
-# After installing
+# Upload a single image
+steamart photo.png
+
+# Upload a single image 3 times
 steamart photo.png 3
 
-# Or run directly
-python steam_upload.py photo.png 3
+# Upload every image in a folder
+steamart ./artwork/
+
+# Upload every image in a folder 2 times each
+steamart ./artwork/ 2
 ```
 
 ```
-usage: steam_upload.py [-h] [--delay DELAY] [--reset-cookies] image quantity
+usage: steam_upload.py [-h] [--delay DELAY] [--reset-cookies] path [quantity]
 
 positional arguments:
-  image              Image file to upload (PNG or JPEG)
-  quantity           Number of times to upload it
+  path               Image file or folder of images to upload
+  quantity           Number of times to upload each image (default: 1)
 
 options:
   --delay DELAY      Seconds between uploads (default: 5)

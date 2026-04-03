@@ -220,10 +220,29 @@ def upload_image(image_path: str, title: str, session_id: str, login_secure: str
         return False
 
 
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
+
+
+def collect_images(path: str) -> list[str]:
+    """Return a list of image file paths from a file or directory."""
+    if os.path.isfile(path):
+        return [path]
+
+    if os.path.isdir(path):
+        images = sorted(
+            f.path for f in os.scandir(path)
+            if f.is_file() and os.path.splitext(f.name)[1].lower() in IMAGE_EXTENSIONS
+        )
+        return images
+
+    return []
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Upload one image to Steam community artwork N times.")
-    parser.add_argument("image", help="Image file to upload")
-    parser.add_argument("quantity", type=int, help="Number of times to upload it")
+    parser = argparse.ArgumentParser(description="Upload images to Steam community artwork.")
+    parser.add_argument("path", help="Image file or folder of images to upload")
+    parser.add_argument("quantity", type=int, nargs="?", default=1,
+                        help="Number of times to upload each image (default: 1)")
     parser.add_argument("--delay", type=float, default=5.0, help="Seconds between uploads (default: 5)")
     parser.add_argument("--reset-cookies", action="store_true", help="Clear saved cookies and enter new ones")
     args = parser.parse_args()
@@ -231,22 +250,30 @@ def main():
     if args.reset_cookies:
         clear_cookies()
 
-    if not os.path.isfile(args.image):
-        logger.error(f"File not found: {args.image}")
+    images = collect_images(args.path)
+    if not images:
+        logger.error(f"No images found: {args.path}")
         return
+
+    logger.info(f"Found {len(images)} image(s), uploading each {args.quantity} time(s)")
 
     session_id, login_secure = load_or_prompt_cookies()
 
+    total = len(images) * args.quantity
     success = 0
-    for i in range(1, args.quantity + 1):
-        random_title = secrets.token_hex(8)
-        if upload_image(args.image, random_title, session_id, login_secure):
-            success += 1
-        if i < args.quantity:
-            logger.info(f"Waiting {args.delay}s before next upload...")
-            time.sleep(args.delay)
+    upload_num = 0
+    for image_path in images:
+        for r in range(args.quantity):
+            upload_num += 1
+            random_title = secrets.token_hex(8)
+            logger.info(f"[{upload_num}/{total}] {os.path.basename(image_path)} (round {r + 1}/{args.quantity})")
+            if upload_image(image_path, random_title, session_id, login_secure):
+                success += 1
+            if upload_num < total:
+                logger.info(f"Waiting {args.delay}s before next upload...")
+                time.sleep(args.delay)
 
-    logger.info(f"Done: {success}/{args.quantity} uploaded successfully.")
+    logger.info(f"Done: {success}/{total} uploaded successfully.")
 
 
 if __name__ == "__main__":
