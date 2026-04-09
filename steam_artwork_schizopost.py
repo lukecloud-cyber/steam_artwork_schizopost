@@ -1,4 +1,3 @@
-import os
 import re
 import json
 import time
@@ -6,6 +5,7 @@ import struct
 import argparse
 import secrets
 from pathlib import Path
+
 from curl_cffi import requests, CurlMime
 from rich.console import Console
 from rich.panel import Panel
@@ -16,17 +16,68 @@ console = Console()
 
 CONFIG_DIR = Path("~/.config/steam_artwork_schizopost").expanduser()
 COOKIES_FILE = CONFIG_DIR / "cookies.json"
+EDIT_URL = "https://steamcommunity.com/sharedfiles/edititem/767/3/"
+DEFAULT_REQUEST_TIMEOUT = 30.0
+MAX_FILE_SIZE = 5 * 1024 * 1024
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
+
+
+def positive_int(value: str) -> int:
+    """argparse type: integer >= 1."""
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be an integer >= 1")
+    return parsed
+
+
+def positive_float(value: str) -> float:
+    """argparse type: float > 0."""
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a number > 0")
+    return parsed
+
+
+def non_negative_float(value: str) -> float:
+    """argparse type: float >= 0."""
+    parsed = float(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be a number >= 0")
+    return parsed
+
+
+def is_supported_image(path: Path) -> bool:
+    """Return True if the path has a supported image extension."""
+    return path.suffix.lower() in IMAGE_EXTENSIONS
+
+
+def detect_mime_type(path: Path) -> str | None:
+    """Return MIME type for a supported image, else None."""
+    suffix = path.suffix.lower()
+    if suffix in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if suffix == ".png":
+        return "image/png"
+    return None
 
 
 def load_or_prompt_cookies() -> tuple[str, str]:
     """Load saved cookies, or prompt the user to enter them."""
     if COOKIES_FILE.exists():
-        data = json.loads(COOKIES_FILE.read_text())
-        sid = data.get("sessionid", "")
-        lsc = data.get("steamLoginSecure", "")
-        if sid and lsc:
-            console.print("[dim]Loaded cookies from[/] [cyan]~/.config/steam_artwork_schizopost/cookies.json[/]")
-            return sid, lsc
+        try:
+            data = json.loads(COOKIES_FILE.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            console.print(f"[yellow]Saved cookies could not be read:[/] {exc}")
+            console.print("[dim]You'll be prompted to enter new cookies.[/]")
+        else:
+            if not isinstance(data, dict):
+                console.print("[yellow]Saved cookies are malformed and will be replaced.[/]")
+            else:
+                sid = data.get("sessionid", "")
+                lsc = data.get("steamLoginSecure", "")
+                if sid and lsc:
+                    console.print("[dim]Loaded cookies from[/] [cyan]~/.config/steam_artwork_schizopost/cookies.json[/]")
+                    return sid, lsc
 
     console.print()
     console.print(Panel.fit(
@@ -60,6 +111,10 @@ def load_or_prompt_cookies() -> tuple[str, str]:
         "sessionid": session_id,
         "steamLoginSecure": login_secure,
     }, indent=2) + "\n")
+    try:
+        COOKIES_FILE.chmod(0o600)
+    except OSError:
+        pass
     console.print(f"[green]Cookies saved to[/] [cyan]{COOKIES_FILE}[/]")
 
     return session_id, login_secure
@@ -77,9 +132,49 @@ def extract_field(html: str, name: str) -> str:
     return m.group(1) if m else ""
 
 
-def image_dimensions(path: str) -> tuple[int, int]:
+def extract_upload_url(html: str) -> str:
+    """Extract the upload form action URL."""
+    action_match = re.search(r'<form[^>]+action="([^"]+)"', html)
+    return action_match.group(1) if action_match else EDIT_URL
+
+
+def validate_form_response(response, html: str) -> bool:
+    """Check that the edit form response looks usable."""
+    if response.status_code != 200:
+        console.print(f"  [red]Failed to load upload form (HTTP {response.status_code})[/]")
+        return False
+    if "<form" not in html:
+        console.print("  [red]Steam returned an unexpected page instead of the upload form[/]")
+        return False
+    return True
+
+
+def extract_form_state(html: str) -> dict[str, str] | None:
+    """Extract upload URL and dynamic form fields from the Steam form."""
+    wg = extract_field(html, "wg")
+    token = extract_field(html, "token")
+    if not wg or not token:
+        console.print("  [red]Failed to extract form tokens — cookies may have expired[/]")
+        console.print("  [dim]Run with --reset-cookies to enter new ones[/]")
+        return None
+
+    prefix_match = re.search(r"cloudfilenameprefix\.value = '([^']*)'", html)
+    prefix = prefix_match.group(1) if prefix_match else ""
+
+    return {
+        "upload_url": extract_upload_url(html),
+        "redirect_uri": extract_field(html, "redirect_uri"),
+        "wg": wg,
+        "wg_hmac": extract_field(html, "wg_hmac"),
+        "realm": extract_field(html, "realm"),
+        "token": token,
+        "cloudfilenameprefix": prefix,
+    }
+
+
+def image_dimensions(path: Path) -> tuple[int, int]:
     """Read image width/height from JPEG or PNG headers without PIL."""
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         header = f.read(24)
 
     if header[:8] == b'\x89PNG\r\n\x1a\n':
@@ -87,7 +182,7 @@ def image_dimensions(path: str) -> tuple[int, int]:
         return w, h
 
     if header[:2] == b'\xff\xd8':  # JPEG — scan for SOF marker
-        with open(path, "rb") as f:
+        with path.open("rb") as f:
             data = f.read()
         i = 2
         while i < len(data) - 8:
@@ -103,126 +198,194 @@ def image_dimensions(path: str) -> tuple[int, int]:
     return 0, 0
 
 
-def upload_image(image_path: str, title: str, session_id: str, login_secure: str) -> bool:
-    """Upload a single image as Steam community artwork. Returns True on success."""
-    edit_url = "https://steamcommunity.com/sharedfiles/edititem/767/3/"
-    mime = "image/jpeg" if image_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
+def validate_image_file(image_path: Path) -> tuple[str, int, int] | None:
+    """Validate local image constraints and return upload metadata."""
+    mime = detect_mime_type(image_path)
+    if not mime:
+        console.print(f"  [red]Unsupported image type:[/] {image_path.name}")
+        return None
 
+    file_size = image_path.stat().st_size
+    if file_size > MAX_FILE_SIZE:
+        console.print(f"  [red]File exceeds Steam's 5 MB limit[/] ({file_size / 1024 / 1024:.1f} MB)")
+        return None
+
+    width, height = image_dimensions(image_path)
+    if width <= 0 or height <= 0:
+        console.print(f"  [red]Could not determine image dimensions:[/] {image_path.name}")
+        return None
+
+    return mime, width, height
+
+
+def fetch_form_state(cookies: dict[str, str], request_timeout: float) -> dict[str, str] | None:
+    """Fetch the Steam form and extract all upload fields."""
+    form_resp = requests.get(
+        EDIT_URL,
+        cookies=cookies,
+        impersonate="chrome",
+        timeout=request_timeout,
+    )
+    form_html = form_resp.text
+    if not validate_form_response(form_resp, form_html):
+        return None
+    return extract_form_state(form_html)
+
+
+def build_upload_multipart(
+    image_path: Path,
+    title: str,
+    session_id: str,
+    mime: str,
+    width: int,
+    height: int,
+    form_state: dict[str, str],
+) -> CurlMime:
+    """Build the multipart payload matching browser form field order."""
+    with image_path.open("rb") as f:
+        file_bytes = f.read()
+
+    mp = CurlMime()
+    mp.addpart(name="redirect_uri", data=form_state["redirect_uri"].encode())
+    mp.addpart(name="wg", data=form_state["wg"].encode())
+    mp.addpart(name="wg_hmac", data=form_state["wg_hmac"].encode())
+    mp.addpart(name="realm", data=form_state["realm"].encode())
+    mp.addpart(name="appid", data=b"767")
+    mp.addpart(name="consumer_app_id", data=b"767")
+    mp.addpart(name="sessionid", data=session_id.encode())
+    mp.addpart(name="token", data=form_state["token"].encode())
+    mp.addpart(name="cloudfilenameprefix", data=form_state["cloudfilenameprefix"].encode())
+    mp.addpart(name="publishedfileid", data=b"0")
+    mp.addpart(name="id", data=b"0")
+    mp.addpart(name="file_type", data=b"3")
+    mp.addpart(name="image_width", data=str(width).encode())
+    mp.addpart(name="image_height", data=str(height).encode())
+    mp.addpart(name="title", data=title.encode())
+    mp.addpart(name="file", filename=image_path.name, content_type=mime, data=file_bytes)
+    mp.addpart(name="description", data=b"")
+    mp.addpart(name="visibility", data=b"0")
+    mp.addpart(name="agree_terms", data=b"on")
+    return mp
+
+
+def interpret_upload_response(response) -> bool:
+    """Interpret Steam's redirect response for upload success."""
+    if response.status_code not in {302, 303}:
+        console.print(f"  [red]Upload failed (HTTP {response.status_code})[/]")
+        return False
+
+    redirect_url = response.headers.get("location", "")
+    if "fileuploadsuccess=1" in redirect_url:
+        return True
+
+    result_match = re.search(r"fileuploadsuccess=(\d+)", redirect_url)
+    if result_match:
+        console.print(f"  [red]Steam returned EResult={result_match.group(1)}[/]")
+    else:
+        console.print("  [red]Upload failed — unexpected response[/]")
+    return False
+
+
+def collect_images(path: str) -> list[Path]:
+    """Return a list of image file paths from a file or directory."""
+    resolved = Path(path).expanduser()
+    if resolved.is_file():
+        return [resolved] if is_supported_image(resolved) else []
+
+    if resolved.is_dir():
+        return sorted(
+            child for child in resolved.iterdir()
+            if child.is_file() and is_supported_image(child)
+        )
+
+    return []
+
+
+def upload_image(
+    image_path: Path,
+    title: str,
+    session_id: str,
+    login_secure: str,
+    request_timeout: float,
+) -> bool:
+    """Upload a single image as Steam community artwork. Returns True on success."""
     cookies = {
         "sessionid": session_id,
         "steamLoginSecure": login_secure,
     }
 
     try:
-        # Step 1: GET the form to pull dynamic tokens and real upload URL
-        form_resp = requests.get(edit_url, cookies=cookies, impersonate="chrome")
-        form_html = form_resp.text
+        image_info = validate_image_file(image_path)
+        if not image_info:
+            return False
+        mime, width, height = image_info
 
-        action_match = re.search(r'<form[^>]+action="([^"]+)"', form_html)
-        upload_url = action_match.group(1) if action_match else edit_url
-
-        width, height = image_dimensions(image_path)
-        file_size = os.path.getsize(image_path)
-        if file_size > 5 * 1024 * 1024:
-            console.print(f"  [red]File exceeds Steam's 5 MB limit[/] ({file_size / 1024 / 1024:.1f} MB)")
+        form_state = fetch_form_state(cookies, request_timeout)
+        if not form_state:
             return False
 
-        # Extract values from form — send as-is (URL-encoded), do NOT unquote
-        wg = extract_field(form_html, "wg")
-        wg_hmac = extract_field(form_html, "wg_hmac")
-        token = extract_field(form_html, "token")
-
-        if not wg or not token:
-            console.print("  [red]Failed to extract form tokens — cookies may have expired[/]")
-            console.print("  [dim]Run with --reset-cookies to enter new ones[/]")
-            return False
-
-        # Extract cloudfilenameprefix from JS if present
-        prefix_match = re.search(r"cloudfilenameprefix\.value = '([^']*)'", form_html)
-        prefix = prefix_match.group(1) if prefix_match else ""
-
-        # Step 2: POST to the real upload endpoint
-        with open(image_path, "rb") as f:
-            file_bytes = f.read()
-
-        mp = CurlMime()
-        mp.addpart(name="redirect_uri", data=extract_field(form_html, "redirect_uri").encode())
-        mp.addpart(name="wg", data=wg.encode())
-        mp.addpart(name="wg_hmac", data=wg_hmac.encode())
-        mp.addpart(name="realm", data=extract_field(form_html, "realm").encode())
-        mp.addpart(name="appid", data=b"767")
-        mp.addpart(name="consumer_app_id", data=b"767")
-        mp.addpart(name="sessionid", data=session_id.encode())
-        mp.addpart(name="token", data=token.encode())
-        mp.addpart(name="cloudfilenameprefix", data=prefix.encode())
-        mp.addpart(name="publishedfileid", data=b"0")
-        mp.addpart(name="id", data=b"0")
-        mp.addpart(name="file_type", data=b"3")
-        mp.addpart(name="image_width", data=str(width).encode())
-        mp.addpart(name="image_height", data=str(height).encode())
-        mp.addpart(name="title", data=title.encode())
-        mp.addpart(name="file", filename=os.path.basename(image_path),
-                   content_type=mime, data=file_bytes)
-        mp.addpart(name="description", data=b"")
-        mp.addpart(name="visibility", data=b"0")
-        mp.addpart(name="agree_terms", data=b"on")
-
-        resp = requests.post(
-            upload_url,
-            multipart=mp,
+        multipart = build_upload_multipart(
+            image_path=image_path,
+            title=title,
+            session_id=session_id,
+            mime=mime,
+            width=width,
+            height=height,
+            form_state=form_state,
+        )
+        response = requests.post(
+            form_state["upload_url"],
+            multipart=multipart,
+            cookies=cookies,
             headers={
                 "Referer": "https://steamcommunity.com/",
                 "Origin": "https://steamcommunity.com",
             },
             allow_redirects=False,
             impersonate="chrome",
+            timeout=request_timeout,
         )
-
-        redirect_url = resp.headers.get("location", "")
-
-        if "fileuploadsuccess=1" in redirect_url:
-            return True
-
-        result_match = re.search(r"fileuploadsuccess=(\d+)", redirect_url)
-        if result_match:
-            console.print(f"  [red]Steam returned EResult={result_match.group(1)}[/]")
-        else:
-            console.print("  [red]Upload failed — unexpected response[/]")
-
-        return False
+        return interpret_upload_response(response)
 
     except FileNotFoundError:
         console.print(f"  [red]File not found:[/] {image_path}")
+        return False
+    except requests.exceptions.Timeout as e:
+        console.print(f"  [red]Steam request timed out after {request_timeout}s:[/] {e}")
+        return False
+    except requests.exceptions.RequestException as e:
+        console.print(f"  [red]Steam request failed:[/] {e}")
+        return False
+    except OSError as e:
+        console.print(f"  [red]File error:[/] {e}")
         return False
     except Exception as e:
         console.print(f"  [red]Error:[/] {e}")
         return False
 
 
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
-
-
-def collect_images(path: str) -> list[str]:
-    """Return a list of image file paths from a file or directory."""
-    if os.path.isfile(path):
-        return [path]
-
-    if os.path.isdir(path):
-        images = sorted(
-            f.path for f in os.scandir(path)
-            if f.is_file() and os.path.splitext(f.name)[1].lower() in IMAGE_EXTENSIONS
-        )
-        return images
-
-    return []
-
-
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description="Upload images to Steam community artwork.")
     parser.add_argument("path", help="Image file or folder of images to upload")
-    parser.add_argument("quantity", type=int, nargs="?", default=1,
-                        help="Number of times to upload each image (default: 1)")
-    parser.add_argument("--delay", type=float, default=5.0, help="Seconds between uploads (default: 5)")
+    parser.add_argument(
+        "quantity",
+        type=positive_int,
+        nargs="?",
+        default=1,
+        help="Number of times to upload each image (default: 1)",
+    )
+    parser.add_argument(
+        "--delay",
+        type=non_negative_float,
+        default=5.0,
+        help="Seconds between uploads (default: 5)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=positive_float,
+        default=DEFAULT_REQUEST_TIMEOUT,
+        help=f"Seconds to wait for Steam requests (default: {DEFAULT_REQUEST_TIMEOUT:g})",
+    )
     parser.add_argument("--reset-cookies", action="store_true", help="Clear saved cookies and enter new ones")
     args = parser.parse_args()
 
@@ -231,8 +394,8 @@ def main():
 
     images = collect_images(args.path)
     if not images:
-        console.print(f"[bold red]No images found:[/] {args.path}")
-        return
+        console.print(f"[bold red]No supported PNG/JPEG images found:[/] {args.path}")
+        raise SystemExit(1)
 
     total = len(images) * args.quantity
     console.print(
@@ -250,13 +413,19 @@ def main():
         for r in range(args.quantity):
             upload_num += 1
             random_title = secrets.token_hex(8)
-            filename = os.path.basename(image_path)
+            filename = image_path.name
             label = f"[{upload_num}/{total}] {filename}"
             if args.quantity > 1:
                 label += f" (round {r + 1}/{args.quantity})"
 
             with Status(f"[bold cyan]Uploading {filename}...[/]", console=console, spinner="dots"):
-                result = upload_image(image_path, random_title, session_id, login_secure)
+                result = upload_image(
+                    image_path=image_path,
+                    title=random_title,
+                    session_id=session_id,
+                    login_secure=login_secure,
+                    request_timeout=args.timeout,
+                )
 
             if result:
                 console.print(f"  [green]OK[/green]  {label}")
@@ -268,10 +437,14 @@ def main():
                 with Status(f"[dim]Waiting {args.delay}s...[/]", console=console, spinner="dots"):
                     time.sleep(args.delay)
 
-    # Summary
     color = "green" if success == total else ("yellow" if success > 0 else "red")
     console.print(f"\n[bold {color}]Done: {success}/{total} uploaded successfully.[/]\n")
 
+    if success < total:
+        raise SystemExit(1)
+
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
