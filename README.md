@@ -45,10 +45,16 @@ python steam_artwork_schizopost.py ./artwork/
 
 # Upload every image in a folder 2 times each
 python steam_artwork_schizopost.py ./artwork/ 2
+
+# Use a custom Steam request timeout
+python steam_artwork_schizopost.py ./artwork/ 2 --timeout 45.5
+
+# If installed via pip, you can also use the console script
+steam_artwork_schizopost ./artwork/ 2
 ```
 
-```
-usage: steam_artwork_schizopost.py [-h] [--delay DELAY] [--reset-cookies] path [quantity]
+```bash
+usage: steam_artwork_schizopost.py [-h] [--delay DELAY] [--timeout TIMEOUT] [--reset-cookies] path [quantity]
 
 positional arguments:
   path               Image file or folder of images to upload
@@ -56,6 +62,7 @@ positional arguments:
 
 options:
   --delay DELAY      Seconds between uploads (default: 5)
+  --timeout TIMEOUT  Seconds to wait for Steam requests (default: 30)
   --reset-cookies    Clear saved cookies and enter new ones
 ```
 
@@ -66,6 +73,10 @@ On first run, the tool will prompt you to enter two cookies from your browser:
 3. Copy the values for **sessionid** and **steamLoginSecure**
 
 Cookies are saved to `~/.config/steam_artwork_schizopost/cookies.json` and reused on subsequent runs. Use `--reset-cookies` if they expire.
+
+Only `.png`, `.jpg`, and `.jpeg` inputs are accepted. If the saved cookie file becomes corrupted, the tool will prompt you to enter fresh values again.
+
+Be careful with local debugging artifacts: raw request dumps can contain sensitive Steam session data and should not be kept around unredacted.
 
 ## How It Works
 
